@@ -1,0 +1,50 @@
+name: Deploy Auth Service
+
+on:
+  push:
+    branches: [ "main" ]
+    
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Set up JDK 21
+      uses: actions/setup-java@v3
+      with:
+        java-version: '21'
+        distribution: 'corretto'
+
+    - name: Build with Maven
+      run: mvn clean package -DskipTests
+
+    - name: Deploy to EC2
+      uses: easingthemes/ssh-deploy@main
+      with:
+        SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+        REMOTE_HOST: ${{ secrets.EC2_HOST }}
+        REMOTE_USER: ${{ secrets.EC2_USER }}
+        SOURCE: "target/*.jar"
+        TARGET: "/home/${{ secrets.EC2_USER }}/auth-service/"
+        SCRIPT_AFTER: |
+          SERVICE_NAME="auth-service"
+          PORT=8082
+          USER_HOME="/home/${{ secrets.EC2_USER }}"
+          DIR="$USER_HOME/$SERVICE_NAME"
+          
+          echo "--- Desplegando $SERVICE_NAME ---"
+          mkdir -p $DIR
+          fuser -k $PORT/tcp || true
+          
+          cd $DIR
+          mv target/*.jar . 2>/dev/null || true
+          rm -rf target
+          
+          NEW_JAR=$(ls -t *.jar | head -n 1)
+          ls *.jar | grep -v "$NEW_JAR" | xargs -r rm
+          
+          # Iniciar (Memoria media: 384MB)
+          nohup java -Xms256m -Xmx384m -jar "$NEW_JAR" > $SERVICE_NAME.log 2>&1 &
